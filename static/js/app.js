@@ -3,7 +3,7 @@
   "use strict";
 
   // ------------------------------------------------------------------ config
-  const LS = { last: "gtv.lastChannel", volume: "gtv.volume", muted: "gtv.muted", proxy: "gtv.useProxy" };
+  const LS = { last: "gtv.lastChannel", volume: "gtv.volume", muted: "gtv.muted", proxy: "gtv.useProxy", favorites: "gtv.favoriteChannels" };
   const REFRESH_MS = 5 * 60 * 1000;     // auto-refresh channel list
   const HEALTH_MS = 30 * 1000;          // server status polling
   const MAX_NET_RETRIES = 3;
@@ -42,6 +42,7 @@
   const el = {
     video: $("#video"), wrap: $("#playerWrap"), overlay: $("#overlay"), overlayText: $("#overlayText"), overlayBtn: $("#overlayBtn"),
     list: $("#channelList"), listState: $("#listState"), search: $("#searchInput"), category: $("#categorySelect"), count: $("#countLabel"),
+    tabs: $("#channelTabs"), favCount: $("#favCount"), npStar: $("#npStar"),
     status: $("#serverStatus"), refresh: $("#refreshBtn"), proxy: $("#proxyToggle"),
     play: $("#playBtn"), prev: $("#prevBtn"), next: $("#nextBtn"), mute: $("#muteBtn"), volume: $("#volume"),
     reload: $("#reloadBtn"), fs: $("#fsBtn"), toast: $("#toast"),
@@ -51,10 +52,20 @@
   // ------------------------------------------------------------------ state
   const state = {
     channels: [], byId: new Map(), category: "all", query: "",
+    favorites: loadFavorites(), tab: "all",
     current: null, hls: null, token: 0,
     netRetries: 0, mediaRecoveries: 0, proxyFallbackTried: false, directTried: false, usingProxy: false,
     signature: "", retryTimer: null,
   };
+
+  function loadFavorites() {
+    try {
+      const saved = JSON.parse(store.get(LS.favorites, "[]"));
+      return new Set(Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : []);
+    } catch {
+      return new Set();
+    }
+  }
 
   // ------------------------------------------------------------- UI helpers
   let toastTimer;
@@ -151,16 +162,31 @@
   function filteredChannels() {
     const q = state.query.trim().toLowerCase();
     return state.channels.filter((c) =>
+      (state.tab !== "fav" || state.favorites.has(c.id)) &&
       (state.category === "all" || c.group === state.category) &&
       (!q || c.name.toLowerCase().includes(q) || c.group.toLowerCase().includes(q)));
   }
 
   function renderChannels() {
     const items = filteredChannels();
-    el.count.textContent = `${items.length} / ${state.channels.length}`;
+    const favoriteCount = state.channels.filter((ch) => state.favorites.has(ch.id)).length;
+    const total = state.tab === "fav" ? favoriteCount : state.channels.length;
+    el.count.textContent = `${items.length} / ${total}`;
+    el.favCount.textContent = String(favoriteCount);
+    el.tabs.querySelectorAll(".tab").forEach((tab) => {
+      const active = tab.dataset.tab === state.tab;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-pressed", String(active));
+    });
     if (!items.length) {
       el.list.innerHTML = "";
-      if (state.channels.length) showListState("info", "No channels match your search.");
+      if (state.tab === "fav") {
+        const hasFavorites = state.channels.some((ch) => state.favorites.has(ch.id));
+        el.list.innerHTML = `<div class="empty">${hasFavorites ? "No favorite channels match your filters." : "No favorites yet. Select ☆ beside a channel to add it."}</div>`;
+        hideListState();
+      } else if (state.channels.length) {
+        showListState("info", "No channels match your search.");
+      }
       return;
     }
     hideListState();
@@ -189,10 +215,15 @@
       ? `<img src="${esc(ch.logo)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.textContent='${initial}'">`
       : initial;
     const active = state.current && state.current.id === ch.id ? " active" : "";
-    return `<button type="button" class="channel${active}" role="listitem" data-id="${esc(ch.id)}" title="${esc(ch.name)}">
-      <span class="logo">${logo}</span>
-      <span class="meta"><div class="name">${esc(ch.name)}</div><div class="grp">${esc(ch.group)}</div></span>
-    </button>`;
+    const favorite = state.favorites.has(ch.id);
+    const favoriteTitle = favorite ? `Remove ${ch.name} from favorites` : `Add ${ch.name} to favorites`;
+    return `<div class="chrow">
+      <button type="button" class="channel${active}" role="listitem" data-id="${esc(ch.id)}" title="${esc(ch.name)}">
+        <span class="logo">${logo}</span>
+        <span class="meta"><div class="name">${esc(ch.name)}</div><div class="grp">${esc(ch.group)}</div></span>
+      </button>
+      <button type="button" class="star${favorite ? " on" : ""}" data-id="${esc(ch.id)}" title="${esc(favoriteTitle)}" aria-label="${esc(favoriteTitle)}" aria-pressed="${favorite}">${favorite ? "★" : "☆"}</button>
+    </div>`;
   }
 
   function markActive() {
@@ -221,9 +252,35 @@
   function setNowPlaying(ch) {
     el.npName.textContent = ch.name;
     el.npGroup.textContent = ch.group;
+    el.npStar.hidden = false;
+    updateNowPlayingStar(ch);
     if (ch.logo) { el.npLogo.src = ch.logo; el.npLogo.hidden = false; el.npLogo.onerror = () => { el.npLogo.hidden = true; }; }
     else el.npLogo.hidden = true;
     document.title = `${ch.name} – GTV IPTV Player`;
+  }
+
+  function updateNowPlayingStar(ch = state.current) {
+    if (!ch) return;
+    const favorite = state.favorites.has(ch.id);
+    const label = favorite
+      ? `Remove ${ch.name} from favorites`
+      : `Add ${ch.name} to favorites`;
+    el.npStar.textContent = favorite ? "★" : "☆";
+    el.npStar.classList.toggle("on", favorite);
+    el.npStar.title = label;
+    el.npStar.setAttribute("aria-label", label);
+    el.npStar.setAttribute("aria-pressed", String(favorite));
+  }
+
+  function toggleFavorite(id) {
+    const channel = state.byId.get(id);
+    if (!channel) return;
+    if (state.favorites.has(id)) state.favorites.delete(id);
+    else state.favorites.add(id);
+    store.set(LS.favorites, JSON.stringify([...state.favorites]));
+    renderChannels();
+    markActive();
+    updateNowPlayingStar();
   }
 
   function stepChannel(delta) {
@@ -387,10 +444,25 @@
 
   // ---------------------------------------------------------------- wiring
   el.list.addEventListener("click", (e) => {
+    const star = e.target.closest(".star");
+    if (star) {
+      toggleFavorite(star.dataset.id);
+      return;
+    }
     const btn = e.target.closest(".channel");
     if (!btn) return;
     const ch = state.byId.get(btn.dataset.id);
     if (ch) playChannel(ch);
+  });
+  el.tabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    state.tab = tab.dataset.tab === "fav" ? "fav" : "all";
+    renderChannels();
+    markActive();
+  });
+  el.npStar.addEventListener("click", () => {
+    if (state.current) toggleFavorite(state.current.id);
   });
   el.search.addEventListener("input", debounce(() => { state.query = el.search.value; renderChannels(); markActive(); }, 150));
   el.category.addEventListener("change", () => { state.category = el.category.value; renderChannels(); });
@@ -414,7 +486,7 @@
 
   document.addEventListener("keydown", (e) => {
     const tag = (e.target.tagName || "").toLowerCase();
-    if (tag === "input" && e.target.type !== "range") return;
+    if ((tag === "input" && e.target.type !== "range") || tag === "button") return;
     if (tag === "select" || e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
       case " ": e.preventDefault(); togglePlay(); break;
