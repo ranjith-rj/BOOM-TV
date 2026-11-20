@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "GTV IPTV Player (Flask)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "GTV_PLAYLIST_URL": "http://192.168.1.7:5350/playlist.m3u",
+        "GTV_PORT": "8787"
+      }
+    }
+  ]
+}
