@@ -1,4 +1,4 @@
-# GTV IPTV Player
+# BOOM TV Player
 
 A modern IPTV web player. **Flask** serves the API, **HTML/CSS/JavaScript** (with [hls.js](https://github.com/video-dev/hls.js)) is the frontend.
 
