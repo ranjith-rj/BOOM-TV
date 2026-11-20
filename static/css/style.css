@@ -45,6 +45,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 7px 12px; border-radius: 10px; cursor: pointer;
 }
 a.btn { text-decoration: none; }
+.try-app { color: #fff; }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn .i { width: 18px; height: 18px; }
